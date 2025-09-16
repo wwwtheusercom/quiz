@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sınav Hazırlık Uygulaması</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 800px;
+        }
+        .question-card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+        .correct {
+            background-color: #10B981 !important;
+            color: white !important;
+            border-color: #10B981 !important;
+        }
+        .incorrect {
+            background-color: #EF4444 !important;
+            color: white !important;
+            border-color: #EF4444 !important;
+        }
+        .option-button:hover:not(:disabled) {
+            background-color: #e5e7eb;
+        }
+        .option-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        .spinner {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="container mx-auto px-4 py-8 bg-white rounded-xl shadow-lg">
+        <h1 class="text-3xl font-bold text-gray-800 text-center mb-6">Sınav Hazırlık Uygulaması</h1>
+        <p class="text-center text-gray-600 mb-6">Notlarınızı aşağıya yazın ve kendinizi test etmek için sorular oluşturun.</p>
+        
+        <!-- Metin Girişi ve Buton Bölümü -->
+        <div id="input-section" class="flex flex-col items-center p-6 border-2 border-dashed border-gray-300 rounded-xl mb-6">
+            <textarea id="notes-input" class="w-full h-48 p-4 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4" placeholder="Notlarınızı buraya yazın veya yapıştırın..."></textarea>
+            <button id="generate-button" class="cursor-pointer bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors">
+                Soruları Oluştur
+            </button>
+        </div>
+
+        <!-- Yükleniyor Göstergesi -->
+        <div id="loading-spinner" class="hidden flex flex-col items-center justify-center py-10">
+            <div class="spinner mb-4"></div>
+            <p class="text-blue-500 font-medium">Sorular oluşturuluyor...</p>
+        </div>
+
+        <!-- Hata Mesajı -->
+        <div id="error-message" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
+            <span class="block sm:inline" id="error-text">Bir hata oluştu! Lütfen daha sonra tekrar deneyin.</span>
+        </div>
+
+        <!-- Sorular Bölümü -->
+        <div id="questions-container" class="space-y-8">
+            <!-- Sorular buraya dinamik olarak eklenecek -->
+        </div>
+
+    </div>
+
+    <script>
+        // Gerekli HTML elementlerine erişim
+        const notesInput = document.getElementById('notes-input');
+        const generateButton = document.getElementById('generate-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const questionsContainer = document.getElementById('questions-container');
+        const errorMessageDiv = document.getElementById('error-message');
+        const errorTextSpan = document.getElementById('error-text');
+
+        // Sabitler
+        // Lütfen sadece API anahtarınızı aşağıdaki tırnak işaretlerinin arasına ekleyin
+        // Örnek: const apiKey = "AIzaSy...";
+        const apiKey = "AIzaSyCx3bTMD73bVSVmHfvRIQhra8OTVSi7X_Q";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+        // Utility fonksiyonları
+        function showLoading() {
+            loadingSpinner.classList.remove('hidden');
+            loadingSpinner.classList.add('flex');
+            questionsContainer.innerHTML = '';
+            hideError();
+        }
+
+        function hideLoading() {
+            loadingSpinner.classList.add('hidden');
+            loadingSpinner.classList.remove('flex');
+        }
+
+        function showError(message) {
+            errorTextSpan.textContent = message;
+            errorMessageDiv.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorMessageDiv.classList.add('hidden');
+        }
+        
+        function sanitizeText(text) {
+            // JSON stringify/parse işleminin düzgün çalışması için metni temizle
+            return text.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+        }
+
+        // Butona tıklandığında çalışacak ana fonksiyon
+        generateButton.addEventListener('click', async () => {
+            const notesText = notesInput.value;
+            if (!notesText || notesText.length < 50) {
+                showError("Lütfen en az 50 karakter uzunluğunda not girin.");
+                return;
+            }
+
+            if (!apiKey) {
+                showError("API anahtarı eksik. Lütfen kodu düzenleyerek anahtarınızı ekleyin.");
+                return;
+            }
+
+            showLoading();
+
+            try {
+                // LLM'e göndermek için metni hazırla
+                const cleanedText = sanitizeText(notesText);
+
+                // LLM için JSON şeması ve istemi hazırla
+                const systemPrompt = "Sen, öğrenci notlarını çoktan seçmeli sınav sorularına dönüştürmede uzman bir eğitim asistanısın. Kullanıcının notlarını analiz et ve bu notlara dayanan 5 adet çoktan seçmeli soru oluştur. Her sorunun dört seçeneği (a, b, c, d) ve doğru cevabın indeks numarası (0-3) olmalıdır. Cevapları aşağıdaki JSON şemasına göre Türkçe olarak oluştur.";
+
+                const userQuery = `Bu notlara göre çoktan seçmeli sorular oluştur: \n\n${cleanedText}`;
+
+                const payload = {
+                    contents: [{
+                        parts: [{ text: userQuery }]
+                    }],
+                    systemInstruction: {
+                        parts: [{ text: systemPrompt }]
+                    },
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                "questions": {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            "question": { "type": "STRING" },
+                                            "options": {
+                                                "type": "ARRAY",
+                                                "items": { "type": "STRING" }
+                                            },
+                                            "correct_answer_index": { "type": "NUMBER" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                // LLM API'sine isteği gönder
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        throw new Error("API anahtarı geçersiz. Lütfen doğru anahtarı girdiğinizden emin olun.");
+                    }
+                    throw new Error(`API hatası: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (!jsonText) {
+                    throw new Error("API'den geçerli bir JSON yanıtı alınamadı.");
+                }
+
+                const data = JSON.parse(jsonText);
+                const questions = data.questions;
+
+                if (!questions || questions.length === 0) {
+                    showError("Notlarınızdan soru oluşturulamadı. Lütfen daha kapsamlı notlar girin.");
+                    hideLoading();
+                    return;
+                }
+
+                hideLoading();
+                renderQuestions(questions);
+
+            } catch (error) {
+                console.error("Hata:", error);
+                hideLoading();
+                showError(`Bir hata oluştu: ${error.message}.`);
+            }
+        });
+
+        // Soruları ekrana yazan fonksiyon
+        function renderQuestions(questions) {
+            questionsContainer.innerHTML = '';
+            questions.forEach((q, qIndex) => {
+                const questionCard = document.createElement('div');
+                questionCard.className = 'question-card bg-gray-50 p-6 rounded-xl border border-gray-200 mb-6';
+                questionCard.innerHTML = `
+                    <h2 class="text-xl font-bold text-gray-700 mb-4">Soru ${qIndex + 1}: ${q.question}</h2>
+                    <div class="options-container space-y-3"></div>
+                `;
+                
+                const optionsContainer = questionCard.querySelector('.options-container');
+                q.options.forEach((optionText, oIndex) => {
+                    const optionButton = document.createElement('button');
+                    optionButton.className = 'option-button w-full text-left py-3 px-4 rounded-lg transition-colors border-2 border-gray-300 text-gray-700 font-medium';
+                    optionButton.textContent = optionText;
+                    optionButton.setAttribute('data-index', oIndex);
+
+                    optionButton.addEventListener('click', () => {
+                        handleAnswer(optionButton, q.correct_answer_index, optionsContainer);
+                    });
+                    optionsContainer.appendChild(optionButton);
+                });
+
+                questionsContainer.appendChild(questionCard);
+            });
+        }
+
+        // Cevapları kontrol eden ve geri bildirim veren fonksiyon
+        function handleAnswer(selectedButton, correctIndex, optionsContainer) {
+            const allButtons = optionsContainer.querySelectorAll('.option-button');
+            const selectedIndex = parseInt(selectedButton.getAttribute('data-index'));
+
+            allButtons.forEach(button => {
+                const buttonIndex = parseInt(button.getAttribute('data-index'));
+                if (buttonIndex === correctIndex) {
+                    button.classList.add('correct');
+                }
+                if (button === selectedButton && selectedIndex !== correctIndex) {
+                    selectedButton.classList.add('incorrect');
+                }
+                button.disabled = true;
+            });
+        }
+
+    </script>
+</body>
+</html>
